@@ -42,16 +42,17 @@ func (self *StepGetVNCPort) Run(state multistep.StateBag) multistep.StepAction {
 			ui.Say(fmt.Sprintf("XS8.0+ no longer support xenstore-read: Make sure to install socat for XS8.0+, attempting to use socat"))
 			expectedport := fmt.Sprintf("59%s", domid)
 			cmd1 := fmt.Sprintf("nohup socat -d -d -lf /tmp/socat-%s TCP4-LISTEN:%s,reuseaddr,fork,tcpwrap=socat,allow-table=all UNIX-CONNECT:/var/run/xen/vnc-%s &>/dev/null &", expectedport, expectedport, domid)
-			remote_vncport, err := ExecuteHostSSHCmd(state, cmd1)
+			_, err := ExecuteHostSSHCmd(state, cmd1)
 			if err != nil {
 				ui.Say(fmt.Sprintf("socat not available on XenServer, halting packer ..."))
 				return multistep.ActionHalt
 			}
-			ui.Say(fmt.Sprintf("nohup socat -d -d -lf /tmp/socat-%s TCP4-LISTEN:%s,reuseaddr,fork,tcpwrap=socat,allow-table=all UNIX-CONNECT:/var/run/xen/vnc-%s &>/dev/null &", remote_vncport, expectedport, domid))
 			remote_vncport = expectedport
+			ui.Say(fmt.Sprintf("nohup socat -d -d -lf /tmp/socat-%s TCP4-LISTEN:%s,reuseaddr,fork,tcpwrap=socat,allow-table=all UNIX-CONNECT:/var/run/xen/vnc-%s &>/dev/null &", remote_vncport, expectedport, domid))
 		}
 	}
 
+	ui.Say(fmt.Sprintf("Setting remote vnc port to %s", remote_vncport))
 	remote_port, err := strconv.ParseUint(remote_vncport, 10, 16)
 
 	if err != nil {
