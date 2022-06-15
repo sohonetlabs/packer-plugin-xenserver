@@ -1,4 +1,4 @@
-package iso
+package xva
 
 import (
 	"context"
@@ -7,23 +7,26 @@ import (
 
 	"github.com/hashicorp/packer-plugin-sdk/multistep"
 	"github.com/hashicorp/packer-plugin-sdk/packer"
-	xenapi "github.com/terra-farm/go-xen-api-client"
 	xsclient "github.com/terra-farm/go-xen-api-client"
 	xscommon "github.com/xenserver/packer-builder-xenserver/builder/xenserver/common"
 )
 
-type stepCreateInstance struct {
+type stepCreateFromTemplate struct {
 	instance *xsclient.VMRef
-	vdi      *xsclient.VDIRef
 }
 
-func (self *stepCreateInstance) Run(ctx context.Context, state multistep.StateBag) multistep.StepAction {
+func (self *stepCreateFromTemplate) Run(ctx context.Context, state multistep.StateBag) multistep.StepAction {
 
 	c := state.Get("client").(*xscommon.Connection)
 	config := state.Get("config").(xscommon.Config)
 	ui := state.Get("ui").(packer.Ui)
 
-	ui.Say("Step: Create Instance")
+	ui.Say("Step: Create Instance from Template")
+
+	if config.CloneTemplate == "" {
+		log.Println("Skipping creation from template - no `clone_template` configured.")
+		return multistep.ActionContinue
+	}
 
 	// Get the template to clone from
 
@@ -82,55 +85,6 @@ func (self *stepCreateInstance) Run(ctx context.Context, state multistep.StateBa
 	err = c.GetClient().VM.SetNameDescription(c.GetSessionRef(), instance, config.VMDescription)
 	if err != nil {
 		ui.Error(fmt.Sprintf("Error setting VM description: %s", err.Error()))
-		return multistep.ActionHalt
-	}
-
-	if len(config.VMOtherConfig) != 0 {
-		vm_other_config, err := c.GetClient().VM.GetOtherConfig(c.GetSessionRef(), instance)
-		if err != nil {
-			ui.Error(fmt.Sprintf("Error getting VM other-config: %s", err.Error()))
-			return multistep.ActionHalt
-		}
-		for key, value := range config.VMOtherConfig {
-			vm_other_config[key] = value
-		}
-		err = c.GetClient().VM.SetOtherConfig(c.GetSessionRef(), instance, vm_other_config)
-		if err != nil {
-			ui.Error(fmt.Sprintf("Error setting VM other-config: %s", err.Error()))
-			return multistep.ActionHalt
-		}
-	}
-
-	// Create VDI for the instance
-	sr, err := config.GetSR(c)
-
-	if err != nil {
-		ui.Error(fmt.Sprintf("Unable to get SR: %s", err.Error()))
-		return multistep.ActionHalt
-	}
-
-	ui.Say(fmt.Sprintf("Using the following SR for the VM: %s", sr))
-
-	vdi, err := c.GetClient().VDI.Create(c.GetSessionRef(), xenapi.VDIRecord{
-		NameLabel:   "Packer-disk",
-		VirtualSize: int(config.DiskSize * 1024 * 1024),
-		Type:        "user",
-		Sharable:    false,
-		ReadOnly:    false,
-		SR:          sr,
-		OtherConfig: map[string]string{
-			"temp": "temp",
-		},
-	})
-	if err != nil {
-		ui.Error(fmt.Sprintf("Unable to create packer disk VDI: %s", err.Error()))
-		return multistep.ActionHalt
-	}
-	self.vdi = &vdi
-
-	err = xscommon.ConnectVdi(c, instance, vdi, xsclient.VbdTypeDisk)
-	if err != nil {
-		ui.Error(fmt.Sprintf("Unable to connect packer disk VDI: %s", err.Error()))
 		return multistep.ActionHalt
 	}
 
@@ -223,7 +177,7 @@ func (self *stepCreateInstance) Run(ctx context.Context, state multistep.StateBa
 	return multistep.ActionContinue
 }
 
-func (self *stepCreateInstance) Cleanup(state multistep.StateBag) {
+func (self *stepCreateFromTemplate) Cleanup(state multistep.StateBag) {
 	config := state.Get("config").(xscommon.Config)
 	if config.ShouldKeepVM(state) {
 		return
@@ -236,14 +190,6 @@ func (self *stepCreateInstance) Cleanup(state multistep.StateBag) {
 		ui.Say("Destroying VM")
 		_ = c.GetClient().VM.HardShutdown(c.GetSessionRef(), *self.instance) // redundant, just in case
 		err := c.GetClient().VM.Destroy(c.GetSessionRef(), *self.instance)
-		if err != nil {
-			ui.Error(err.Error())
-		}
-	}
-
-	if self.vdi != nil {
-		ui.Say("Destroying VDI")
-		err := c.GetClient().VDI.Destroy(c.GetSessionRef(), *self.vdi)
 		if err != nil {
 			ui.Error(err.Error())
 		}
